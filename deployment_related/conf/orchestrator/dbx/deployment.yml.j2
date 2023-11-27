@@ -1,0 +1,133 @@
+{% set JOB_NAME = "datax-utils-test-suite" %}
+{% set DEFAULT_WORKFLOW_NAME = "sit-"+env['REPOS'] if env['ENVIRONMENT'] == "sit" else env['REPOS'] %}
+
+
+build:
+  no_build: true
+
+custom:
+  ###CLUSTER-SETTINGS###
+  basic-job-cluster-settings: &basic-job-cluster-settings
+    policy_id: "cluster-policy://{{ env['JOB_CLUSTER_POLICY_NAME'] }}"
+    spark_version: "11.3.x-scala2.12"
+    runtime_engine: STANDARD
+    spark_env_vars:
+        TZ: "Etc/GMT-7"
+        ENVIRONMENT: {{ env['ENVIRONMENT'] }}
+        MNF_LANDINGZONE_DIR: {{ env['MNF_LANDINGZONE_DIR'] }}
+        SECRET_SCOPE_NAME: {{ env['SECRET_SCOPE_NAME'] }} 
+        FW_APP_TENANT_ID_SECRET_NAME: {{ env['FW_APP_TENANT_ID_SECRET_NAME'] }} 
+        FW_APP_CLIENT_ID_SECRET_NAME: {{ env['FW_APP_CLIENT_ID_SECRET_NAME'] }} 
+        FW_APP_CLIENT_SECRET_SECRET_NAME: {{ env['FW_APP_CLIENT_SECRET_SECRET_NAME'] }} 
+        FW_PAT_TOKEN_SECRET_NAME: {{ env['FW_PAT_TOKEN_SECRET_NAME'] }} 
+        DATABRICKS_JOB_API_VERSION: {{ env['DATABRICKS_JOB_API_VERSION'] }} 
+        AZURE_STORAGE_ACCOUNT: {{ env['AZURE_STORAGE_ACCOUNT'] }}
+        JOB_STATUS_STORAGE_ACCOUNT: {{ env['JOB_STATUS_STORAGE_ACCOUNT'] }}
+        DBFS_PATH: {{ env['REPO_DIR'] }}
+        AR_DATAX_FRMWK_APP_ID: {{ env['AR_DATAX_FRMWK_APP_ID'] }}
+        AZURE_DEVOPS_EXT_PAT: "{{ env['ARTIFACT_TOKEN_SECRET_NAME'] }}"
+        ARTIFACT_TOKEN_SECRET_NAME: "{{ env['ARTIFACT_TOKEN_SECRET_NAME'] }}"
+        ARTIFACT_URL: {{ env['ARTIFACT_URL'] }}
+        PACKAGE_VERSION: {{ env['PACKAGE_VERSION'] }}
+        SPARK_VERSION: 3.3.0
+    init_scripts:
+      - dbfs:
+          destination: "dbfs:/{{ env['REPO_DIR'] }}/set_private_pip_repositories.sh"
+    spark_conf: {{ var['SPARK_CONF'] }}
+
+  basic-static-job-cluster-settings: &basic-static-job-cluster-settings
+    <<: *basic-job-cluster-settings
+    driver_node_type_id: Standard_E8s_v4
+    node_type_id: Standard_E8s_v4
+    num_workers: 2
+
+  small-auto-job-cluster-settings: &small-auto-job-cluster-settings
+    <<: *basic-job-cluster-settings
+    driver_node_type_id: Standard_E8s_v4
+    node_type_id: Standard_E8s_v4
+    autoscale:
+      min_workers: 2
+      max_workers: 3
+
+  large-auto-job-cluster-settings: &large-auto-job-cluster-settings
+    <<: *basic-job-cluster-settings
+    driver_node_type_id: Standard_E8s_v4
+    node_type_id: Standard_E8s_v4
+    autoscale:
+      min_workers: 2
+      max_workers: 5
+
+  ###WORKFLOW-SETTINGS###
+  workflows-settings: &workflows-settings
+    tags:
+      environment: {{ env['ENVIRONMENT'] }}
+      product: "customer360"
+      area_name: "test_suite"
+      job_type: "generic_pipeline"
+    schedule:
+      quartz_cron_expression: "59 0 2 * * ?"
+      timezone_id: "Asia/Bangkok"
+      pause_status: "PAUSED"
+    email_notifications:
+      no_alert_for_skipped_runs: "false"
+    format: MULTI_TASK
+    access_control_list:
+      - user_name: {{ env['AR_DATAX_FRMWK_APP_ID'] }}
+        permission_level: "IS_OWNER"
+      - group_name: "AAD_DATAXAIZ_C360_ACN_USER_PRD.Grp"
+        permission_level: "CAN_MANAGE"
+      - group_name: "AAD_DATAX_C360_DS.Grp"
+        permission_level: "CAN_MANAGE_RUN"
+
+
+  ###TASK-SETTINGS###
+  basic-task-settings: &basic-task-settings
+    job_cluster_key: basic_static_job_cluster
+    timeout_seconds: 10800
+    max_retries: 0
+    email_notifications: {}
+
+environments:
+  default:
+    workflows:
+      - name: "trigger-e2e-notebook"
+        <<: *workflows-settings
+
+        job_clusters:
+          - job_cluster_key: small_auto_scale_job_cluster
+            new_cluster:
+              <<: *small-auto-job-cluster-settings
+          - job_cluster_key: large_auto_scale_job_cluster
+            new_cluster:
+              <<: *large-auto-job-cluster-settings
+
+        tasks:
+          - task_key: "trigger_e2e_notebook"
+            <<: *basic-task-settings
+            job_cluster_key: small_auto_scale_job_cluster
+            new_cluster:
+              <<: *small-auto-job-cluster-settings
+            notebook_task:
+              notebook_path: "/Shared/c360_tests/workflow_test/e2e_test/e2e_test_notebook"
+              base_parameters:
+                input_start_date: '-skip'
+                input_end_date: '-skip'
+              source: WORKSPACE
+            libraries:
+            - maven:
+                coordinates: com.amazon.deequ:deequ:2.0.3-spark-3.3
+            - pypi:
+                package: datax-utils-deployment-helper==0.10.2
+            - pypi:
+                package: datax-utils-data-layer==0.9.0
+            - pypi:
+                package: datax-engine-job-launcher==0.2.0
+            - pypi:
+                package: datax-utils-data-quality==0.3.0
+            - pypi:
+                package: datax-gp-sample-workflow==0.3.0
+            - pypi:
+                package: pydeequ==1.1.0
+            timeout_seconds: 10800
+            max_retries: 0
+            email_notifications: {}
